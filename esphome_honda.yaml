@@ -33,6 +33,12 @@ wifi:
       password: !secret wifi_password
     - ssid: !secret wifi_home_iot
       password: !secret wifi_home_pwd
+    - ssid: !secret wifi_1_ssid
+      password: !secret wifi_1_pwd
+    - ssid: !secret wifi_2_ssid
+      password: !secret wifi_2_pwd
+    - ssid: !secret wifi_3_ssid
+      password: !secret wifi_3_pwd
   on_connect:
     then:
       - switch.turn_on: switch_gpio_g
@@ -77,6 +83,20 @@ mqtt:
     payload: offline
   idf_send_async: true
   discovery_unique_id_generator: legacy
+
+
+esp32_ble_server:
+  services:
+    - uuid: 0x1ff8
+      advertise: true
+      characteristics:
+        - uuid: 0x1
+          read: true
+          notify: true
+          id: ble_send
+        - uuid: 0x2
+          read: true
+          notify: true
 
 # =============================================================================
 #  Globals — CAN 数据全局变量，由 on_frame 更新、由统一 interval 发布
@@ -316,6 +336,14 @@ canbus:
       - can_id: 330         # 0x14A
         then:
           - lambda: |-
+              std::vector<uint8_t> cdata(4 + x.size());
+              cdata[0] = static_cast<uint8_t>(can_id);
+              cdata[1] = static_cast<uint8_t>(can_id >> 8);
+              cdata[2] = static_cast<uint8_t>(can_id >> 16);
+              cdata[3] = static_cast<uint8_t>(can_id >> 24);
+              memcpy(cdata.data() + 4, x.data(), x.size());
+              id(ble_send).set_value(std::move(cdata));
+              id(ble_send).notify();
               id(glb_data_ready) = true;
               id(glb_steer_angle) = (int16_t)(x.data()[0] << 8 | x.data()[1]) * -0.1f;
               id(glb_steer_angle_rate) = (int16_t)(x.data()[2] << 8 | x.data()[3]) * -1.0f;
@@ -324,6 +352,14 @@ canbus:
       - can_id: 344         # 0x158
         then:
           - lambda: |-
+              std::vector<uint8_t> cdata(4 + x.size());
+              cdata[0] = static_cast<uint8_t>(can_id);
+              cdata[1] = static_cast<uint8_t>(can_id >> 8);
+              cdata[2] = static_cast<uint8_t>(can_id >> 16);
+              cdata[3] = static_cast<uint8_t>(can_id >> 24);
+              memcpy(cdata.data() + 4, x.data(), x.size());
+              id(ble_send).set_value(std::move(cdata));
+              id(ble_send).notify();
               id(glb_car_speed) = (((uint16_t)x.data()[0] << 8) | x.data()[1]) * 0.01f;
               id(glb_odometer) = x.data()[6] * 10;
 
@@ -331,6 +367,14 @@ canbus:
       - can_id: 380         # 0x17C
         then:
           - lambda: |-
+              std::vector<uint8_t> cdata(4 + x.size());
+              cdata[0] = static_cast<uint8_t>(can_id);
+              cdata[1] = static_cast<uint8_t>(can_id >> 8);
+              cdata[2] = static_cast<uint8_t>(can_id >> 16);
+              cdata[3] = static_cast<uint8_t>(can_id >> 24);
+              memcpy(cdata.data() + 4, x.data(), x.size());
+              id(ble_send).set_value(std::move(cdata));
+              id(ble_send).notify();
               id(glb_gas_pedal) = x.data()[0];
               id(glb_engine_rpm) = (uint16_t)(x.data()[2] << 8 | x.data()[3]);
               id(glb_brake_switch) = (x.data()[6] >> 5) & 1;
@@ -339,6 +383,14 @@ canbus:
       - can_id: 420         # 0x1A4
         then:
           - lambda: |-
+              std::vector<uint8_t> cdata(4 + x.size());
+              cdata[0] = static_cast<uint8_t>(can_id);
+              cdata[1] = static_cast<uint8_t>(can_id >> 8);
+              cdata[2] = static_cast<uint8_t>(can_id >> 16);
+              cdata[3] = static_cast<uint8_t>(can_id >> 24);
+              memcpy(cdata.data() + 4, x.data(), x.size());
+              id(ble_send).set_value(std::move(cdata));
+              id(ble_send).notify();
               id(glb_user_brake) = (x.data()[0] << 8 | x.data()[1]) * 0.015625f;
               id(glb_esp_disabled) = (x.data()[3] >> 4) & 1;
               id(glb_brake_hold) = (x.data()[5] >> 6) & 1;
@@ -370,6 +422,14 @@ canbus:
       - can_id: 490         # 0x1EA
         then:
           - lambda: |-
+              std::vector<uint8_t> cdata(4 + x.size());
+              cdata[0] = static_cast<uint8_t>(can_id);
+              cdata[1] = static_cast<uint8_t>(can_id >> 8);
+              cdata[2] = static_cast<uint8_t>(can_id >> 16);
+              cdata[3] = static_cast<uint8_t>(can_id >> 24);
+              memcpy(cdata.data() + 4, x.data(), x.size());
+              id(ble_send).set_value(std::move(cdata));
+              id(ble_send).notify();
               id(glb_lat_accel) = (int16_t)(x.data()[0] << 8 | x.data()[1]) * 0.0015f;
               id(glb_long_accel) = (int16_t)(x.data()[2] << 8 | x.data()[3]) * 0.0015f;
 
@@ -430,6 +490,14 @@ canbus:
       - can_id: 804         # 0x324
         then:
           - lambda: |-
+              std::vector<uint8_t> cdata(4 + x.size());
+              cdata[0] = static_cast<uint8_t>(can_id);
+              cdata[1] = static_cast<uint8_t>(can_id >> 8);
+              cdata[2] = static_cast<uint8_t>(can_id >> 16);
+              cdata[3] = static_cast<uint8_t>(can_id >> 24);
+              memcpy(cdata.data() + 4, x.data(), x.size());
+              id(ble_send).set_value(std::move(cdata));
+              id(ble_send).notify();
               id(glb_engine_temp) = x.data()[0] - 40;
               id(glb_intake_temp) = x.data()[1] - 40;
               id(glb_trip_fuel) = (x.data()[2] << 8 | x.data()[3]) * 0.0001f;
@@ -438,6 +506,14 @@ canbus:
       - can_id: 806         # 0x326
         then:
           - lambda: |-
+              std::vector<uint8_t> cdata(4 + x.size());
+              cdata[0] = static_cast<uint8_t>(can_id);
+              cdata[1] = static_cast<uint8_t>(can_id >> 8);
+              cdata[2] = static_cast<uint8_t>(can_id >> 16);
+              cdata[3] = static_cast<uint8_t>(can_id >> 24);
+              memcpy(cdata.data() + 4, x.data(), x.size());
+              id(ble_send).set_value(std::move(cdata));
+              id(ble_send).notify();
               id(glb_reverse_light) = (x.data()[2] >> 2) & 1;
               id(glb_left_blinker) = (x.data()[3] >> 2) & 1;
               id(glb_right_blinker) = (x.data()[3] >> 3) & 1;
@@ -447,6 +523,14 @@ canbus:
       - can_id: 846         # 0x34E
         then:
           - lambda: |-
+              std::vector<uint8_t> cdata(4 + x.size());
+              cdata[0] = static_cast<uint8_t>(can_id);
+              cdata[1] = static_cast<uint8_t>(can_id >> 8);
+              cdata[2] = static_cast<uint8_t>(can_id >> 16);
+              cdata[3] = static_cast<uint8_t>(can_id >> 24);
+              memcpy(cdata.data() + 4, x.data(), x.size());
+              id(ble_send).set_value(std::move(cdata));
+              id(ble_send).notify();
               id(glb_map_kpa) = x.data()[1] * 1.19f;
 
       # ---- CAN 0x374 (884) STALK STATUS 6Hz — 雨刮 / 大灯 ----
@@ -839,7 +923,7 @@ text_sensor:
 #  所有 CAN 数据先写入 globals，再由此定时器统一发布
 # =============================================================================
 interval:
-  - interval: 500ms
+  - interval: 1s
     then:
       # 仅在收到真实 CAN 数据后才发布，防止重启时发布 0/false 到 HA
       - lambda: |-
