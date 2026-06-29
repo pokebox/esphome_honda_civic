@@ -1,0 +1,822 @@
+# Board: Espressif ESP32-S3-DevKitC-1-N16R8V (16 MB Flash Quad, 8 MB PSRAM Octal)
+# Definition: definitions/boards/esp32-s3-devkitc1-n16r8/manifest.yaml
+
+esphome:
+  name: honda
+  on_boot:
+    - then:
+        - output.turn_off: output_gpio_r
+        - switch.turn_off: switch_gpio_g
+        - switch.turn_off: switch_gpio_b
+esp32:
+  variant: ESP32S3
+  framework:
+    type: esp-idf
+  flash_size: 16MB
+
+psram:
+  mode: octal
+  speed: 80MHZ
+
+logger:
+  level: DEBUG
+  logs:
+    mqtt: DEBUG
+    esp-tls: DEBUG
+    canbus: NONE
+ota:
+  - platform: esphome
+
+wifi:
+  networks:
+    - ssid: !secret wifi_ssid
+      password: !secret wifi_password
+    - ssid: !secret wifi_home_iot
+      password: !secret wifi_home_pwd
+  on_connect:
+    then:
+      - switch.turn_on: switch_gpio_g
+  on_disconnect:
+    then:
+      - switch.turn_off: switch_gpio_g
+  use_psram: true
+
+time:
+  - platform: sntp
+    id: my_time
+    servers:
+      - ntp.aliyun.com
+      - pool.ntp.org
+      - time.google.com
+    timezone: Asia/Shanghai
+
+mqtt:
+  broker: !secret mqtt_server
+  password: !secret mqtt_server_pwd
+  username: !secret mqtt_server_user
+  port: 8883
+  skip_cert_cn_check: false
+  certificate_authority: !secret ca_file
+
+  log_topic:
+    level: DEBUG
+    topic: esphome/debug
+  on_connect:
+    - then:
+        - switch.turn_on: switch_gpio_g
+
+  discovery_object_id_generator: device_name
+  discovery: true
+  discovery_retain: true
+  birth_message:
+    topic: homeassistant/status
+    payload: online
+
+  will_message:
+    topic: homeassistant/status
+    payload: offline
+  idf_send_async: true
+  discovery_unique_id_generator: legacy
+
+output:
+  - platform: gpio
+    pin: GPIO21
+    id: output_gpio_r
+    inverted: true
+
+switch:
+  - platform: gpio
+    pin: GPIO47
+    id: switch_gpio_g
+    inverted: true
+    device_class: switch
+    restore_mode: DISABLED
+    name: led_green
+    subscribe_qos: "1"
+    qos: "1"
+  - platform: gpio
+    pin: GPIO48
+    id: switch_gpio_b
+    inverted: true
+    device_class: outlet
+    restore_mode: DISABLED
+    name: led_blue
+
+# =============================================================================
+#  CAN Bus — 接收汽车 OBD 数据（本田协议，500Kbps，Motorola 位序）
+#  信号定义参考 can.md
+#  多字节信号: byte[N] 为 MSB，byte[N+1] 为 LSB（Motorola 大端序）
+#  位信号: byte_index = start_bit/8, bit_within_byte = start_bit%8
+#  字节对齐信号（start_bit%8==7）: 直接读取整字节
+# =============================================================================
+canbus:
+  - platform: esp32_can
+    can_id: 344            # 设备自身发送 ID (0x158)
+    rx_pin: GPIO2
+    tx_pin: GPIO1
+    id: canbus_esp32_can_1
+    bit_rate: 500KBPS
+    mode: NORMAL
+    on_frame:
+
+      # ---- CAN 0x130 (304) GAS_PEDAL2 60Hz ----
+      # - can_id: 304         # 0x130
+      #   then:
+      #     - if:
+      #         condition:
+      #           lambda: |-
+      #             static unsigned long last_pub = 0;
+      #             unsigned long now = millis();
+      #             if (now - last_pub < 1000) return false;
+      #             last_pub = now;
+      #             return true;
+      #         then:
+      #           - sensor.template.publish:
+      #               id: sensor_gas_pedal_2
+      #               state: !lambda return x.data()[4];
+
+      # ---- CAN 0x14A (330) STEERING SENSORS 60Hz ----
+      - can_id: 330         # 0x14A
+        then:
+          - if:
+              condition:
+                lambda: |-
+                  static unsigned long last_pub = 0;
+                  unsigned long now = millis();
+                  if (now - last_pub < 1000) return false;
+                  last_pub = now;
+                  return true;
+              then:
+                - sensor.template.publish:
+                    id: sensor_steer_angle
+                    state: !lambda return (int16_t)(x.data()[0] << 8 | x.data()[1]) * -0.1f;
+                - sensor.template.publish:
+                    id: sensor_steer_angle_rate
+                    state: !lambda return (int16_t)(x.data()[2] << 8 | x.data()[3]) * -1.0f;
+
+      # ---- CAN 0x158 (344) ENGINE DATA 60Hz — 速度 / 单次里程 ----
+      - can_id: 344         # 0x158
+        then:
+          - if:
+              condition:
+                lambda: |-
+                  static unsigned long last_pub = 0;
+                  unsigned long now = millis();
+                  if (now - last_pub < 500) return false;
+                  last_pub = now;
+                  return true;
+              then:
+                - sensor.template.publish:
+                    id: car_speed
+                    state: !lambda |-
+                      return (((uint16_t)x.data()[0] << 8) | x.data()[1]) * 0.01f;
+                - sensor.template.publish:
+                    id: sensor_odometer
+                    state: !lambda |-
+                      return x.data()[6] * 10;
+
+      # ---- CAN 0x17C (380) POWERTRAIN 60Hz — 油门 / 转速 / 刹车 ----
+      - can_id: 380         # 0x17C
+        then:
+          - if:
+              condition:
+                lambda: |-
+                  static unsigned long last_pub = 0;
+                  unsigned long now = millis();
+                  if (now - last_pub < 500) return false;
+                  last_pub = now;
+                  return true;
+              then:
+                - sensor.template.publish:
+                    id: sensor_gas_pedal
+                    state: !lambda return x.data()[0];
+                - sensor.template.publish:
+                    id: sensor_engine_rpm
+                    state: !lambda return (uint16_t)(x.data()[2] << 8 | x.data()[3]);
+                - binary_sensor.template.publish:
+                    id: binary_brake_switch
+                    state: !lambda return (x.data()[6] >> 5) & 1;
+
+      # ---- CAN 0x1A4 (420) VSA STATUS 30Hz — 刹车压力 / ESP / 刹车保持 ----
+      - can_id: 420         # 0x1A4
+        then:
+          - if:
+              condition:
+                lambda: |-
+                  static unsigned long last_pub = 0;
+                  unsigned long now = millis();
+                  if (now - last_pub < 500) return false;
+                  last_pub = now;
+                  return true;
+              then:
+                - sensor.template.publish:
+                    id: sensor_user_brake
+                    state: !lambda return (x.data()[0] << 8 | x.data()[1]) * 0.015625f;
+                - binary_sensor.template.publish:
+                # [3]>>4
+                    id: binary_esp_disabled
+                    state: !lambda return (x.data()[3] >> 4) & 1;
+                - binary_sensor.template.publish:
+                    id: binary_brake_hold
+                    state: !lambda return (x.data()[5] >> 6) & 1;
+
+      # ---- CAN 0x1C2 (450) EPB STATUS 30Hz — 电子手刹 ----
+      - can_id: 450         # 0x1C2
+        then:
+          - if:
+              condition:
+                lambda: |-
+                  static unsigned long last_pub = 0;
+                  unsigned long now = millis();
+                  if (now - last_pub < 500) return false;
+                  last_pub = now;
+                  return true;
+              then:
+                - text_sensor.template.publish:
+                # [3]>>4
+                    id: text_epb_state
+                    state: !lambda |-
+                      uint8_t val = (x.data()[3] >> 4) & 0x03;
+                      if (val == 0) return "Released";
+                      if (val == 1) return "Pulling";
+                      if (val == 2) return "Releasing";
+                      if (val == 3) return "Applied";
+                      return "Unknown";
+                - binary_sensor.template.publish:
+                    id: binary_epb_active
+                    state: !lambda return (x.data()[0] >> 3) & 1;
+
+      # ---- CAN 0x1DC (476) 发动机转速（备用）30Hz ----
+      # - can_id: 476         # 0x1DC
+      #   then:
+      #     - if:
+      #         condition:
+      #           lambda: |-
+      #             static unsigned long last_pub = 0;
+      #             unsigned long now = millis();
+      #             if (now - last_pub < 1000) return false;
+      #             last_pub = now;
+      #             return true;
+      #         then:
+      #           - sensor.template.publish:
+      #               id: sensor_engine_rpm_2
+      #               state: !lambda return (uint16_t)(x.data()[1] << 8 | x.data()[2]);
+
+      # ---- CAN 0x1EA (490) VEHICLE DYNAMICS 30Hz — 加速度 ----
+      - can_id: 490         # 0x1EA
+        then:
+          - if:
+              condition:
+                lambda: |-
+                  static unsigned long last_pub = 0;
+                  unsigned long now = millis();
+                  if (now - last_pub < 500) return false;
+                  last_pub = now;
+                  return true;
+              then:
+                - sensor.template.publish:
+                    id: sensor_lat_accel
+                    state: !lambda return (int16_t)(x.data()[0] << 8 | x.data()[1]) * 0.0015f;
+                - sensor.template.publish:
+                    id: sensor_long_accel
+                    state: !lambda return (int16_t)(x.data()[2] << 8 | x.data()[3]) * 0.0015f;
+
+      # ---- CAN 0x221 (545) ECON STATUS 15Hz ----
+      - can_id: 545         # 0x221
+        then:
+          - if:
+              condition:
+                lambda: |-
+                  static unsigned long last_pub = 0;
+                  unsigned long now = millis();
+                  if (now - last_pub < 500) return false;
+                  last_pub = now;
+                  return true;
+              then:
+                - binary_sensor.template.publish:
+                    id: binary_econ_on
+                    state: !lambda return (x.data()[2] >> 7) & 1;
+
+      # ---- CAN 0x255 (597) ROUGH WHEEL SPEEDS 15Hz — 粗略轮速 ----
+      # - can_id: 597         # 0x255
+      #   then:
+      #     - if:
+      #         condition:
+      #           lambda: |-
+      #             static unsigned long last_pub = 0;
+      #             unsigned long now = millis();
+      #             if (now - last_pub < 500) return false;
+      #             last_pub = now;
+      #             return true;
+      #         then:
+      #           - sensor.template.publish:
+      #               id: sensor_wheel_speed_fl
+      #               state: !lambda return x.data()[0];
+      #           - sensor.template.publish:
+      #               id: sensor_wheel_speed_fr
+      #               state: !lambda return x.data()[1];
+      #           - sensor.template.publish:
+      #               id: sensor_wheel_speed_rl
+      #               state: !lambda return x.data()[2];
+      #           - sensor.template.publish:
+      #               id: sensor_wheel_speed_rr
+      #               state: !lambda return x.data()[3];
+
+      # ---- CAN 0x305 (773) SEATBELT STATUS 6Hz ----
+      - can_id: 773         # 0x305
+        then:
+          - binary_sensor.template.publish:
+              id: binary_seatbelt_driver_latched
+              state: !lambda return (x.data()[1] >> 5) & 1;
+          - binary_sensor.template.publish:
+              id: binary_seatbelt_pass_latched
+              state: !lambda return (x.data()[1] >> 3) & 1;
+          - binary_sensor.template.publish:
+              id: binary_pass_airbag_off
+              state: !lambda return (x.data()[1] >> 6) & 1;
+
+      # ---- CAN 0x309 (777) CAR SPEED 6Hz — 仪表车速 / 车锁 ----
+      - can_id: 777         # 0x309
+        then:
+          - if:
+              condition:
+                lambda: |-
+                  static unsigned long last_pub = 0;
+                  unsigned long now = millis();
+                  if (now - last_pub < 500) return false;
+                  last_pub = now;
+                  return true;
+              then:
+                - sensor.template.publish:
+                    id: sensor_car_speed_dash
+                    state: !lambda return (x.data()[0] << 8 | x.data()[1]) * 0.01f;
+                - sensor.template.publish:
+                    id: sensor_rough_car_speed
+                    state: !lambda return x.data()[2];
+                - binary_sensor.template.publish:
+                    id: binary_lock_status
+                    state: !lambda return ((x.data()[6] >> 6) & 0x03) == 2;
+
+      # ---- CAN 0x320 (800) 车停稳信号 6Hz ----
+      - can_id: 800         # 0x320
+        then:
+          - binary_sensor.template.publish:
+              id: binary_car_stopped
+              state: !lambda return (x.data()[5] >> 0) & 1;
+
+      # ---- CAN 0x324 (804) CRUISE 6Hz — 水温 / 进气温度 / 行程油耗 ----
+      - can_id: 804         # 0x324
+        then:
+          - if:
+              condition:
+                lambda: |-
+                  static unsigned long last_pub = 0;
+                  unsigned long now = millis();
+                  if (now - last_pub < 1000) return false;
+                  last_pub = now;
+                  return true;
+              then:
+                - sensor.template.publish:
+                    id: sensor_engine_temp
+                    state: !lambda return x.data()[0] - 40;
+                - sensor.template.publish:
+                    id: sensor_intake_temp
+                    state: !lambda return x.data()[1] - 40;
+                - sensor.template.publish:
+                    id: sensor_trip_fuel
+                    state: !lambda return (x.data()[2] << 8 | x.data()[3]) * 0.0001f;
+
+      # ---- CAN 0x326 (806) SCM_FEEDBACK 6Hz — 灯光 / 转向灯 / 手刹 ----
+      - can_id: 806         # 0x326
+        then:
+          - binary_sensor.template.publish:
+              id: binary_reverse_light
+              state: !lambda return (x.data()[2] >> 2) & 1;
+          - binary_sensor.template.publish:
+              id: binary_left_blinker
+              state: !lambda return (x.data()[3] >> 2) & 1;
+          - binary_sensor.template.publish:
+              id: binary_right_blinker
+              state: !lambda return (x.data()[3] >> 3) & 1;
+          - binary_sensor.template.publish:
+              id: binary_parking_brake
+              state: !lambda return (x.data()[3] >> 5) & 1;
+
+      # ---- CAN 0x34E (846) MAP SENSOR 6Hz — 进气歧管压力 ----
+      - can_id: 846         # 0x34E
+        then:
+          - sensor.template.publish:
+              id: sensor_map_kpa
+              state: !lambda return x.data()[1] * 1.19f;
+
+      # ---- CAN 0x374 (884) STALK STATUS 6Hz — 雨刮 / 大灯 ----
+      - can_id: 884         # 0x374
+        then:
+          - binary_sensor.template.publish:
+              id: binary_headlights_on
+              state: !lambda return (x.data()[6] >> 6) & 1;
+          - binary_sensor.template.publish:
+              id: binary_high_beam_hold
+              state: !lambda return (x.data()[5] >> 7) & 1;
+          # - binary_sensor.template.publish:
+          #     id: binary_auto_headlights
+          #     state: !lambda return (x.data()[5] >> 6) & 1;
+          - sensor.template.publish:
+              id: sensor_wiper_switch
+              state: !lambda return (x.data()[6] >> 5) & 0x03;
+
+      # ---- CAN 0x37B (891) STALK STATUS2 6Hz — 远近光 / 示廓灯 ----
+      - can_id: 891         # 0x37B
+        then:
+          - binary_sensor.template.publish:
+              id: binary_high_beams
+              state: !lambda return (x.data()[4] >> 2) & 1;
+          - binary_sensor.template.publish:
+              id: binary_low_beams
+              state: !lambda return (x.data()[4] >> 3) & 1;
+          - binary_sensor.template.publish:
+              id: binary_park_lights
+              state: !lambda return (x.data()[4] >> 4) & 1;
+          - sensor.template.publish:
+              id: sensor_wipers
+              state: !lambda return (x.data()[2] >> 1) & 0x03;
+
+      # ---- CAN 0x405 (1029) DOOR STATUS 2Hz — 车门 / 后备箱 ----
+      - can_id: 1029        # 0x405
+        then:
+          - binary_sensor.template.publish:
+              id: binary_door_FL
+              state: !lambda return (x.data()[4] >> 5) & 1;
+          - binary_sensor.template.publish:
+              id: binary_door_FR
+              state: !lambda return (x.data()[4] >> 6) & 1;
+          - binary_sensor.template.publish:
+              id: binary_door_RL
+              state: !lambda return (x.data()[4] >> 7) & 1;
+          - binary_sensor.template.publish:
+              id: binary_door_RR
+              state: !lambda return (x.data()[5] >> 0) & 1;
+          - binary_sensor.template.publish:
+              id: binary_trunk_open
+              state: !lambda return (x.data()[5] >> 1) & 1;
+
+      # ---- CAN 0x465 (1125) 离合器状态 2Hz ----
+      - can_id: 1125        # 0x465
+        then:
+          - sensor.template.publish:
+              id: sensor_clutch
+              state: !lambda return (x.data()[6] >> 1) & 0x03;
+
+      # ---- CAN 0x516 (1302) ODOMETER — 总行驶里程 ----
+      - can_id: 1302        # 0x516
+        then:
+          - sensor.template.publish:
+              id: sensor_total_odometer
+              state: !lambda |-
+                return (uint32_t)(x.data()[0] << 16 | x.data()[1] << 8 | x.data()[2]);
+
+# =============================================================================
+#  Template Sensors（数值型传感器）
+# =============================================================================
+sensor:
+  # ---- 动力总成 ----
+  - platform: template
+    name: "engine rpm"
+    id: sensor_engine_rpm
+    unit_of_measurement: "RPM"
+    accuracy_decimals: 0
+    update_interval: 1s
+    icon: "mdi:engine"
+
+  - platform: template
+    name: "speed"
+    id: car_speed
+    unit_of_measurement: "km/h"
+    device_class: speed
+    accuracy_decimals: 2
+    update_interval: 1s
+
+  - platform: template
+    name: "dash speed"
+    id: sensor_car_speed_dash
+    unit_of_measurement: "km/h"
+    device_class: speed
+    accuracy_decimals: 2
+    update_interval: 1s
+
+  - platform: template
+    name: "rough speed"
+    id: sensor_rough_car_speed
+    unit_of_measurement: "km/h"
+    device_class: speed
+    accuracy_decimals: 0
+    update_interval: 1s
+
+  - platform: template
+    name: "gas pedal"
+    id: sensor_gas_pedal
+    unit_of_measurement: '%'
+    accuracy_decimals: 0
+    update_interval: never
+
+  # - platform: template
+  #   name: "gas pedal 2"
+  #   id: sensor_gas_pedal_2
+  #   unit_of_measurement: '%'
+  #   accuracy_decimals: 0
+  #   update_interval: never
+
+  # ---- 温度 ----
+  - platform: template
+    name: "engine temp"
+    id: sensor_engine_temp
+    unit_of_measurement: '°C'
+    device_class: temperature
+    accuracy_decimals: 1
+    update_interval: 5s
+    icon: "mdi:coolant-temperature"
+
+  - platform: template
+    name: "intake temp"
+    id: sensor_intake_temp
+    unit_of_measurement: '°C'
+    device_class: temperature
+    accuracy_decimals: 1
+    update_interval: 5s
+
+  # ---- 里程 ----
+  - platform: template
+    name: "odometer"
+    id: sensor_odometer
+    unit_of_measurement: "m"
+    device_class: distance
+    accuracy_decimals: 0
+    update_interval: 5s
+
+  - platform: template
+    name: "total odometer"
+    id: sensor_total_odometer
+    unit_of_measurement: "km"
+    device_class: distance
+    accuracy_decimals: 0
+    update_interval: 5s
+
+  - platform: template
+    name: "trip fuel"
+    id: sensor_trip_fuel
+    unit_of_measurement: "L"
+    device_class: volume
+    accuracy_decimals: 4
+    update_interval: 2s
+
+  # ---- 刹车 ----
+  - platform: template
+    name: "brake"
+    id: sensor_user_brake
+    unit_of_measurement: "kPa"
+    accuracy_decimals: 1
+    update_interval: never
+    device_class: pressure
+    icon: "mdi:car-brake-low-pressure"
+
+  # ---- 转向 ----
+  - platform: template
+    name: "steer angle"
+    id: sensor_steer_angle
+    unit_of_measurement: "°"
+    accuracy_decimals: 4
+    update_interval: 1s
+    icon: "mdi:steering"
+
+  - platform: template
+    name: "steer angle rate"
+    id: sensor_steer_angle_rate
+    unit_of_measurement: "°/s"
+    accuracy_decimals: 4
+    update_interval: 1s
+    icon: "mdi:steering"
+
+  # ---- 加速度 ----
+  - platform: template
+    name: "lat accel"
+    id: sensor_lat_accel
+    unit_of_measurement: "m/s²"
+    accuracy_decimals: 3
+    update_interval: 1s
+
+  - platform: template
+    name: "long accel"
+    id: sensor_long_accel
+    unit_of_measurement: "m/s²"
+    accuracy_decimals: 3
+    update_interval: 1s
+
+  # ---- 轮速（粗略） ----
+  # - platform: template
+  #   name: "wheel speed FL"
+  #   id: sensor_wheel_speed_fl
+  #   unit_of_measurement: "km/h"
+  #   device_class: speed
+  #   accuracy_decimals: 0
+  #   update_interval: never
+  # - platform: template
+  #   name: "wheel speed FR"
+  #   id: sensor_wheel_speed_fr
+  #   unit_of_measurement: "km/h"
+  #   device_class: speed
+  #   accuracy_decimals: 0
+  #   update_interval: never
+  # - platform: template
+  #   name: "wheel speed RL"
+  #   id: sensor_wheel_speed_rl
+  #   unit_of_measurement: "km/h"
+  #   device_class: speed
+  #   accuracy_decimals: 0
+  #   update_interval: never
+  # - platform: template
+  #   name: "wheel speed RR"
+  #   id: sensor_wheel_speed_rr
+  #   unit_of_measurement: "km/h"
+  #   device_class: speed
+  #   accuracy_decimals: 0
+  #   update_interval: never
+
+  # ---- 进气歧管压力 ----
+  - platform: template
+    name: "MAP kPa"
+    id: sensor_map_kpa
+    unit_of_measurement: "kPa"
+    device_class: pressure
+    accuracy_decimals: 1
+    update_interval: 1s
+    icon: "mdi:car-turbocharger"
+
+  # ---- 雨刮 / 离合器 ----
+  - platform: template
+    name: "wiper switch"
+    id: sensor_wiper_switch
+    accuracy_decimals: 0
+    update_interval: never
+    icon: "mdi:wiper"
+  - platform: template
+    name: "wipers"
+    id: sensor_wipers
+    accuracy_decimals: 0
+    update_interval: never
+    icon: "mdi:wiper"
+  - platform: template
+    name: "clutch"
+    id: sensor_clutch
+    accuracy_decimals: 0
+    update_interval: never
+    icon: "mdi:car-clutch"
+
+# =============================================================================
+#  Binary Sensors（开关量传感器）
+# =============================================================================
+binary_sensor:
+  # ---- 物理按钮（BOOT） ----
+  - platform: gpio
+    name: boot
+    pin:
+      number: GPIO0
+      inverted: true
+      mode:
+        input: true
+    id: binary_sensor_gpio_1
+    on_click:
+      - then:
+          - switch.toggle: switch_gpio_b
+
+  # ---- 外部灯光 ----
+  - platform: template
+    name: "light all"
+    id: binary_headlights_on
+    device_class: light
+    icon: "mdi:car-parking-lights"
+  - platform: template
+    name: "high beams light"
+    id: binary_high_beams
+    device_class: light
+    icon: "mdi:car-light-high"
+  - platform: template
+    name: "low beams light"
+    id: binary_low_beams
+    device_class: light
+    icon: "mdi:car-light-dimmed"
+  - platform: template
+    name: "left blinker"
+    id: binary_left_blinker
+    device_class: light
+    icon: "mdi:arrow-left-bold"
+  - platform: template
+    name: "right blinker"
+    id: binary_right_blinker
+    device_class: light
+    icon: "mdi:arrow-right-bold"
+  - platform: template
+    name: "reverse light"
+    id: binary_reverse_light
+    device_class: light
+    icon: "mdi:alarm-light-outline"
+  - platform: template
+    name: "park lights"
+    id: binary_park_lights
+    device_class: light
+    icon: "mdi:car-parking-lights"
+  - platform: template
+    name: "high beam hold"
+    id: binary_high_beam_hold
+    device_class: light
+    icon: "mdi:car-light-high"
+  # - platform: template
+  #   name: "auto headlights"
+  #   id: binary_auto_headlights
+  #   device_class: light
+
+  # ---- 制动 / 驻车 ----
+  - platform: template
+    name: "brake switch"
+    id: binary_brake_switch
+    icon: "mdi:car-brake-alert"
+  - platform: template
+    name: "parking brake"
+    id: binary_parking_brake
+    icon: "mdi:car-brake-parking"
+  - platform: template
+    name: "EPB active"
+    id: binary_epb_active
+    icon: "mdi:car-brake-parking"
+  - platform: template
+    name: "ESP disabled"
+    id: binary_esp_disabled
+    icon: "mdi:car-esp"
+  - platform: template
+    name: "brake hold"
+    id: binary_brake_hold
+    icon: "mdi:car-brake-hold"
+
+  # ---- 车门 / 后备箱 ----
+  - platform: template
+    name: "door FL"
+    id: binary_door_FL
+    device_class: door
+    icon: "mdi:car-door"
+  - platform: template
+    name: "door FR"
+    id: binary_door_FR
+    device_class: door
+    icon: "mdi:car-door"
+  - platform: template
+    name: "door RL"
+    id: binary_door_RL
+    device_class: door
+    icon: "mdi:car-door"
+  - platform: template
+    name: "door RR"
+    id: binary_door_RR
+    device_class: door
+    icon: "mdi:car-door"
+  - platform: template
+    name: "door trunk"
+    id: binary_trunk_open
+    device_class: door
+
+  # ---- 安全带 ----
+  - platform: template
+    name: "seatbelt driver"
+    id: binary_seatbelt_driver_latched
+    icon: "mdi:seatbelt"
+  - platform: template
+    name: "seatbelt passenger"
+    id: binary_seatbelt_pass_latched
+    icon: "mdi:seatbelt"
+  - platform: template
+    name: "pass airbag off"
+    id: binary_pass_airbag_off
+    icon: "mdi:airbag"
+
+  # ---- 其他 ----
+  - platform: template
+    name: "ECON on"
+    id: binary_econ_on
+    device_class: power
+  - platform: template
+    name: "lock status"
+    id: binary_lock_status
+    device_class: lock
+    filters:
+      - invert:
+    icon: "mdi:car-door-lock"
+  - platform: template
+    name: "car stopped"
+    id: binary_car_stopped
+
+# =============================================================================
+#  Text Sensors（文本传感器）
+# =============================================================================
+text_sensor:
+  - platform: template
+    name: "EPB state"
+    id: text_epb_state
+    icon: "mdi:car-brake-worn-linings"
