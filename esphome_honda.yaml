@@ -29,7 +29,15 @@ ota:
     password: !secret honda__ota_password
   - platform: http_request
     http_request_id: http
-
+    on_progress:
+      then:
+        - logger.log:
+            format: OTA progress %0.1f%%
+            args:
+              - x
+        - sensor.template.publish:
+            id: ota_progress
+            state: !lambda return x;
 http_request:
   id: http
   
@@ -287,6 +295,17 @@ switch:
     restore_mode: DISABLED
     name: led_blue
 
+button:
+  - platform: template
+    id: button_ota
+    name: OTA start
+    icon: "mdi:progress-upload"
+    on_press:
+      - then:
+          - ota.http_request.flash:
+              url: https://otaserver.yourdomain.com/honda.ota.bin
+              md5_url: https://otaserver.yourdomain.com/honda.ota.md5
+
 # =============================================================================
 #  CAN Bus — 接收汽车 OBD 数据（本田协议，500Kbps，Motorola 位序）
 #  信号定义参考 can.md
@@ -294,6 +313,7 @@ switch:
 #  位信号: byte_index = start_bit/8, bit_within_byte = start_bit%8
 #  字节对齐信号（start_bit%8==7）: 直接读取整字节
 # =============================================================================
+
 canbus:
   - platform: esp32_can
     can_id: 344            # 设备自身发送 ID (0x158)
@@ -640,6 +660,12 @@ canbus:
 #  Template Sensors（数值型传感器）
 # =============================================================================
 sensor:
+  - platform: template
+    name: ota progress
+    id: ota_progress
+    icon: "mdi:progress-upload"
+    update_interval: never
+    
   # ---- 动力总成 ----
   - platform: template
     name: "engine rpm"
