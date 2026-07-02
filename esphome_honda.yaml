@@ -138,56 +138,42 @@ globals:
   # ---- CAN 0x14A Steering ----
   - id: glb_steer_angle
     type: float
-    restore_value: yes
   - id: glb_steer_angle_rate
     type: float
-    restore_value: yes
 
   # ---- CAN 0x158 Engine ----
   - id: glb_car_speed
     type: float
-    restore_value: yes
   - id: glb_odometer
     type: float
-    restore_value: yes
 
   # ---- CAN 0x17C Powertrain ----
   - id: glb_gas_pedal
     type: float
-    restore_value: yes
   - id: glb_engine_rpm
     type: float
-    restore_value: yes
   - id: glb_brake_switch
     type: bool
-    restore_value: yes
 
   # ---- CAN 0x1A4 VSA ----
   - id: glb_user_brake
     type: float
-    restore_value: yes
   - id: glb_esp_disabled
     type: bool
-    restore_value: yes
   - id: glb_brake_hold
     type: bool
-    restore_value: yes
 
   # ---- CAN 0x1C2 EPB ----
   - id: glb_epb_state
     type: int
-    restore_value: yes
   - id: glb_epb_active
     type: bool
-    restore_value: yes
 
   # ---- CAN 0x1EA Vehicle Dynamics ----
   - id: glb_lat_accel
     type: float
-    restore_value: yes
   - id: glb_long_accel
     type: float
-    restore_value: yes
 
   # ---- CAN 0x221 ECON ----
   - id: glb_econ_on
@@ -197,106 +183,80 @@ globals:
   # ---- CAN 0x305 Seatbelt ----
   - id: glb_seatbelt_driver
     type: bool
-    restore_value: yes
   - id: glb_seatbelt_pass
     type: bool
-    restore_value: yes
   - id: glb_pass_airbag_off
     type: bool
-    restore_value: yes
 
   # ---- CAN 0x309 Speed/Dash ----
   - id: glb_car_speed_dash
     type: float
-    restore_value: yes
   - id: glb_rough_car_speed
     type: float
-    restore_value: yes
   - id: glb_lock_status
     type: bool
-    restore_value: yes
 
   # ---- CAN 0x320 Car Stopped ----
   - id: glb_car_stopped
     type: bool
-    restore_value: yes
+  - id: glb_dashboard_info
+    type: int
 
   # ---- CAN 0x324 Cruise ----
   - id: glb_engine_temp
     type: float
-    restore_value: yes
   - id: glb_intake_temp
     type: float
-    restore_value: yes
   - id: glb_trip_fuel
     type: float
-    restore_value: yes
 
   # ---- CAN 0x326 SCM ----
   - id: glb_reverse_light
     type: bool
-    restore_value: yes
   - id: glb_left_blinker
     type: bool
-    restore_value: yes
   - id: glb_right_blinker
     type: bool
-    restore_value: yes
   - id: glb_parking_brake
     type: bool
-    restore_value: yes
 
   # ---- CAN 0x34E MAP ----
   - id: glb_map_kpa
     type: float
-    restore_value: yes
 
   # ---- CAN 0x374 Stalk ----
   - id: glb_headlights_on
     type: bool
-    restore_value: yes
   - id: glb_high_beam_hold
     type: bool
-    restore_value: yes
   - id: glb_wiper_switch
     type: float
-    restore_value: yes
 
   # ---- CAN 0x37B Stalk2 ----
   - id: glb_high_beams
     type: bool
-    restore_value: yes
   - id: glb_low_beams
     type: bool
-    restore_value: yes
   - id: glb_park_lights
     type: bool
-    restore_value: yes
   - id: glb_wipers
     type: float
-    restore_value: yes
 
   # ---- CAN 0x405 Doors ----
   - id: glb_door_FL
     type: bool
-    restore_value: yes
   - id: glb_door_FR
     type: bool
-    restore_value: yes
   - id: glb_door_RL
     type: bool
-    restore_value: yes
   - id: glb_door_RR
     type: bool
-    restore_value: yes
   - id: glb_trunk_open
     type: bool
-    restore_value: yes
 
   # ---- CAN 0x465 Clutch ----
   - id: glb_clutch
     type: float
-    restore_value: yes
 
   # ---- CAN 0x516 Total Odometer ----
   - id: glb_total_odometer
@@ -539,9 +499,13 @@ canbus:
         then:
           - lambda: |-
               id(glb_car_stopped) = (x.data()[5] >> 0) & 1;
+              id(glb_dashboard_info) = x.data()[5];
           - binary_sensor.template.publish:
               id: binary_car_stopped
               state: !lambda return id(glb_car_stopped);
+          - sensor.template.publish:
+              id: sensor_dashboard_info
+              state: !lambda return id(glb_dashboard_info);
 
       # ---- CAN 0x324 (804) CRUISE 6Hz — 水温 / 进气温度 / 行程油耗 ----
       - can_id: 804         # 0x324
@@ -867,14 +831,22 @@ sensor:
     accuracy_decimals: 0
     update_interval: never
     icon: "mdi:car-clutch"
-
-# =============================================================================
-#  Binary Sensors（开关量传感器）
-# =============================================================================
+  - platform: template
+    name: "dashboard info"
+    id: sensor_dashboard_info
+    accuracy_decimals: 0
+    update_interval: never
+    icon: "mdi:car-info"
+    
   - platform: adc
     name: power_voltage
     pin: GPIO4
     id: sensor_adc_1
+
+    
+# =============================================================================
+#  Binary Sensors（开关量传感器）
+# =============================================================================
 binary_sensor:
   # ---- 物理按钮（BOOT） ----
   - platform: gpio
