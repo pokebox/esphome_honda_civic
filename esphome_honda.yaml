@@ -141,7 +141,10 @@ globals:
   # ---- 数据就绪标志（首次收到 CAN 数据后设为 true） ----
   - id: glb_data_ready
     type: bool
-    restore_value: no
+  - id: glb_low_data_ready
+    type: bool
+  - id: glb_init_done
+    type: bool
 
   # ---- CAN 0x14A Steering ----
   - id: glb_steer_angle
@@ -722,6 +725,7 @@ canbus:
               id(glb_door_RL) = (x.data()[4] >> 7) & 1;
               id(glb_door_RR) = (x.data()[5] >> 0) & 1;
               id(glb_trunk_open) = (x.data()[5] >> 1) & 1;
+              id(glb_low_data_ready) = true;
           - if:
               condition:
                 lambda: |-
@@ -988,7 +992,8 @@ sensor:
     name: power_voltage
     pin: GPIO4
     id: sensor_adc_1
-
+  - platform: internal_temperature
+    name: "ESP32 Temp"
     
 # =============================================================================
 #  Binary Sensors（开关量传感器）
@@ -1153,6 +1158,12 @@ interval:
       # 仅在收到真实 CAN 数据后才发布，防止重启时发布 0/false 到 HA
       - lambda: |-
           if (!id(glb_data_ready)) return;
+          if (!id(glb_low_data_ready)) return;
+          if (!id(glb_init_done)) {
+            id(force_update_binary_sensors).execute();
+            id(glb_init_done) = true;
+            ESP_LOGI("main", "CAN data init done");
+          }
 
       # ---- Steering ----
       - sensor.template.publish:
@@ -1236,3 +1247,79 @@ interval:
             if (val == 3) return "Applied";
             return "Unknown";
 
+script:
+  - id: force_update_binary_sensors
+    mode: single
+    then:
+      - binary_sensor.template.publish:
+          id: binary_brake_switch
+          state: !lambda return id(glb_brake_switch);
+      - binary_sensor.template.publish:
+          id: binary_esp_disabled
+          state: !lambda return id(glb_esp_disabled);
+      - binary_sensor.template.publish:
+          id: binary_brake_hold
+          state: !lambda return id(glb_brake_hold);
+      - binary_sensor.template.publish:
+          id: binary_epb_active
+          state: !lambda return id(glb_epb_active);
+      - binary_sensor.template.publish:
+          id: binary_econ_on
+          state: !lambda return id(glb_econ_on);
+      - binary_sensor.template.publish:
+          id: binary_seatbelt_driver_latched
+          state: !lambda return id(glb_seatbelt_driver);
+      - binary_sensor.template.publish:
+          id: binary_seatbelt_pass_latched
+          state: !lambda return id(glb_seatbelt_pass);
+      - binary_sensor.template.publish:
+          id: binary_pass_airbag_off
+          state: !lambda return id(glb_pass_airbag_off);
+      - binary_sensor.template.publish:
+          id: binary_lock_status
+          state: !lambda return id(glb_lock_status);
+      - binary_sensor.template.publish:
+          id: binary_car_stopped
+          state: !lambda return id(glb_car_stopped);
+      - binary_sensor.template.publish:
+          id: binary_reverse_light
+          state: !lambda return id(glb_reverse_light);
+      - binary_sensor.template.publish:
+          id: binary_left_blinker
+          state: !lambda return id(glb_left_blinker);
+      - binary_sensor.template.publish:
+          id: binary_right_blinker
+          state: !lambda return id(glb_right_blinker);
+      - binary_sensor.template.publish:
+          id: binary_parking_brake
+          state: !lambda return id(glb_parking_brake);
+      - binary_sensor.template.publish:
+          id: binary_headlights_on
+          state: !lambda return id(glb_headlights_on);
+      - binary_sensor.template.publish:
+          id: binary_high_beam_hold
+          state: !lambda return id(glb_high_beam_hold);
+      - binary_sensor.template.publish:
+          id: binary_high_beams
+          state: !lambda return id(glb_high_beams);
+      - binary_sensor.template.publish:
+          id: binary_low_beams
+          state: !lambda return id(glb_low_beams);
+      - binary_sensor.template.publish:
+          id: binary_park_lights
+          state: !lambda return id(glb_park_lights);
+      - binary_sensor.template.publish:
+          id: binary_door_FL
+          state: !lambda return id(glb_door_FL);
+      - binary_sensor.template.publish:
+          id: binary_door_FR
+          state: !lambda return id(glb_door_FR);
+      - binary_sensor.template.publish:
+          id: binary_door_RL
+          state: !lambda return id(glb_door_RL);
+      - binary_sensor.template.publish:
+          id: binary_door_RR
+          state: !lambda return id(glb_door_RR);
+      - binary_sensor.template.publish:
+          id: binary_trunk_open
+          state: !lambda return id(glb_trunk_open);
