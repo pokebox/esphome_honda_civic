@@ -382,7 +382,7 @@ canbus:
               memcpy(cdata.data() + 4, x.data(), x.size());
               id(ble_send).set_value(std::move(cdata));
               id(ble_send).notify();
-              id(glb_gas_pedal) = x.data()[0];
+              id(glb_gas_pedal) = (x.data()[0] * 100.0f) / 255.0f;
               id(glb_engine_rpm) = (uint16_t)(x.data()[2] << 8 | x.data()[3]);
               id(glb_brake_switch) = (x.data()[6] >> 5) & 1;
           - if:
@@ -1139,6 +1139,9 @@ text_sensor:
     name: "EPB state"
     id: text_epb_state
     icon: "mdi:car-brake-worn-linings"
+  - platform: version
+    name: version
+    id: text_sensor_version_1
 
 # =============================================================================
 #  Interval — 统一定时更新所有传感器
