@@ -70,6 +70,50 @@ time:
       - pool.ntp.org
       - time.google.com
     timezone: Asia/Shanghai
+  - platform: gps
+    on_time:
+      - seconds: /5
+        then:
+          - mqtt.publish_json:
+              topic: homeassistant/device_tracker/honda/attributes
+              payload: |-
+                root["latitude"] = id(gps_1_latitude).state;
+                root["longitude"] = id(gps_1_longitude).state;
+                root["gps_accuracy"] = id(gps_1_hdop).state;
+uart:
+  id: uart_1
+  baud_rate: 9600
+  rx_pin: GPIO44
+  tx_pin: GPIO43
+  # debug:
+  #   direction: BOTH
+  #   sequence:
+  #     - lambda: "UARTDebug::log_string(direction, bytes, debug_prefix);"
+gps:
+  - uart_id: uart_1
+    altitude:
+      id: gps_1_altitude
+      name: GPS Altitude
+    course:
+      id: gps_1_course
+      name: GPS Course
+    hdop:
+      id: gps_1_hdop
+      name: GPS Hdop
+    latitude:
+      id: gps_1_latitude
+      name: GPS Latitude
+    longitude:
+      id: gps_1_longitude
+      name: GPS Longitude
+    satellites:
+      id: gps_1_satellites
+      name: GPS Satellites
+    speed:
+      id: gps_1_speed
+      name: GPS Speed
+    id: gps_1
+    update_interval: 5s
 
 mqtt:
   broker: !secret mqtt_server
@@ -86,7 +130,14 @@ mqtt:
   on_connect:
     - then:
         - switch.turn_on: switch_gpio_g
-
+    - then:
+        - delay:
+            seconds: '5'
+        - mqtt.publish_json:
+            payload: |
+              root["json_attributes_topic"] = "homeassistant/device_tracker/honda/attributes";
+              root["name"] = "Honda Tracker";
+            topic: homeassistant/device_tracker/honda/config
   discovery_object_id_generator: device_name
   discovery: true
   discovery_retain: true
@@ -789,6 +840,7 @@ sensor:
     id: ota_progress
     icon: "mdi:progress-upload"
     update_interval: never
+    unit_of_measurement: '%'
     
   # ---- 动力总成 ----
   - platform: template
