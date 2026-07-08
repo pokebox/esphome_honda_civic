@@ -133,11 +133,8 @@ mqtt:
     - then:
         - delay:
             seconds: '5'
-        - mqtt.publish_json:
-            payload: |
-              root["json_attributes_topic"] = "homeassistant/device_tracker/honda/attributes";
-              root["name"] = "Honda Tracker";
-            topic: homeassistant/device_tracker/honda/config
+        - script.execute: mqtt_publish_honda_tracker
+
   discovery_object_id_generator: device_name
   discovery: true
   discovery_retain: true
@@ -603,7 +600,11 @@ canbus:
           - lambda: |-
               id(glb_car_speed_dash) = (x.data()[0] << 8 | x.data()[1]) * 0.01f;
               id(glb_rough_car_speed) = x.data()[2];
-              id(glb_lock_status) = ((x.data()[6] >> 6) & 0x03) == 2;
+              id(glb_lock_status) = ((x.data()[6] >> 6) & 0x03) == 1;
+
+          - sensor.template.publish:
+              id: sensor_debug_lock_status
+              state: !lambda return x.data()[6];
           - if:
               condition:
                 lambda: |-
@@ -830,7 +831,6 @@ canbus:
           - lambda: |-
               id(glb_data_ready) = true;
               id(glb_total_odometer) = (uint32_t)(x.data()[0] << 16 | x.data()[1] << 8 | x.data()[2]);
-
 # =============================================================================
 #  Template Sensors（数值型传感器）
 # =============================================================================
@@ -1050,6 +1050,10 @@ sensor:
 # =============================================================================
 #  Binary Sensors（开关量传感器）
 # =============================================================================
+  - platform: template
+    name: dbg_lock_status
+    id: sensor_debug_lock_status
+    update_interval: never
 binary_sensor:
   # ---- 物理按钮（BOOT） ----
   - platform: gpio
@@ -1181,8 +1185,6 @@ binary_sensor:
     name: "lock status"
     id: binary_lock_status
     device_class: lock
-    filters:
-      - invert:
     icon: "mdi:car-door-lock"
   - platform: template
     name: "car stopped"
@@ -1299,6 +1301,13 @@ interval:
             if (val == 3) return "Applied";
             return "Unknown";
 
+  - interval: 30s
+    then:
+      - script.execute: mqtt_publish_honda_tracker
+      - lambda: |-
+          if (!id(glb_init_done)) {
+            id(force_update_binary_sensors).execute();
+          }
 script:
   - id: force_update_binary_sensors
     mode: single
@@ -1375,3 +1384,23 @@ script:
       - binary_sensor.template.publish:
           id: binary_trunk_open
           state: !lambda return id(glb_trunk_open);
+
+  - id: mqtt_publish_honda_tracker
+    mode: single
+    then:
+        - mqtt.publish_json:
+            topic: homeassistant/device_tracker/honda/config
+            payload: |-
+              root["json_attributes_topic"] = "homeassistant/device_tracker/honda/attributes";
+              root["name"] = "Honda Tracker";
+              root["unique_id"] = "ESPdevice_trackerhonda";
+              root["source_type"] = "gps";
+              /*
+              // 使用 to<JsonObject>() 替代 createNestedObject
+              JsonObject device = root["device"].to<JsonObject>();
+              device["name"] = "Honda Tracker";
+            
+              // 使用 to<JsonArray>() 替代 createNestedArray
+              JsonArray identifiers = device["identifiers"].to<JsonArray>();
+              identifiers.add(get_mac_address());
+              */
